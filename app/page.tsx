@@ -1,424 +1,577 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Sparkles, Heart, Star, Zap, MessageCircle, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Sparkles, Sword, Shield, Heart, Star, Zap, Eye, MessageCircle, Loader } from 'lucide-react';
 
-const AI_DUNGEON_GAME = () => {
-  const canvasRef = useRef(null);
-  const gameLoopRef = useRef(null);
-  const [gameState, setGameState] = useState('menu'); // menu, playing, paused, victory
-  const [player, setPlayer] = useState({ x: 50, y: 300, health: 100, score: 0, level: 1 });
+const MysticQuestGame = () => {
+  const [gameState, setGameState] = useState('menu'); // 'menu', 'playing', 'ai-interaction', 'game-over'
+  const [player, setPlayer] = useState({
+    x: 400,
+    y: 300,
+    health: 100,
+    energy: 100,
+    level: 1,
+    experience: 0,
+    inventory: []
+  });
+  const [currentScene, setCurrentScene] = useState('forest');
   const [aiResponse, setAiResponse] = useState('');
   const [isAiThinking, setIsAiThinking] = useState(false);
-  const [gameContext, setGameContext] = useState('');
-  const [treasures, setTreasures] = useState([]);
+  const [playerInput, setPlayerInput] = useState('');
+  const [gameLog, setGameLog] = useState([]);
+  const [npcs, setNpcs] = useState([]);
+  const [items, setItems] = useState([]);
   const [enemies, setEnemies] = useState([]);
-  const [particles, setParticles] = useState([]);
-  const [keys, setKeys] = useState({});
-  const [roomNumber, setRoomNumber] = useState(1);
-  const [showAiPanel, setShowAiPanel] = useState(false);
+  const [questProgress, setQuestProgress] = useState({
+    currentQuest: 'Find the Ancient Oracle',
+    completed: [],
+    objectives: ['Explore the mystical forest', 'Discover hidden secrets', 'Consult the AI Oracle']
+  });
 
-  // Game constants
-  const CANVAS_WIDTH = 800;
-  const CANVAS_HEIGHT = 400;
-  const PLAYER_SIZE = 20;
-  const TREASURE_SIZE = 15;
-  const ENEMY_SIZE = 18;
+  // Game scenes with beautiful backgrounds
+  const scenes = {
+    forest: {
+      name: 'Enchanted Forest',
+      description: 'A mystical forest filled with ancient magic and secrets',
+      color: 'from-green-800 via-green-600 to-emerald-400'
+    },
+    temple: {
+      name: 'Oracle Temple',
+      description: 'An ancient temple where the AI Oracle resides',
+      color: 'from-purple-800 via-blue-600 to-indigo-400'
+    },
+    village: {
+      name: 'Mystic Village',
+      description: 'A peaceful village where wise inhabitants share their knowledge',
+      color: 'from-orange-800 via-amber-600 to-yellow-400'
+    }
+  };
 
-  // Initialize game objects
-  const generateRoom = useCallback((level) => {
-    const newTreasures = [];
-    const newEnemies = [];
-    const treasureCount = Math.min(3 + level, 8);
-    const enemyCount = Math.min(2 + Math.floor(level / 2), 6);
+  // Initialize game elements
+  useEffect(() => {
+    if (gameState === 'playing') {
+      initializeScene();
+    }
+  }, [currentScene, gameState]);
 
-    // Generate treasures
-    for (let i = 0; i < treasureCount; i++) {
-      newTreasures.push({
-        x: Math.random() * (CANVAS_WIDTH - TREASURE_SIZE),
-        y: Math.random() * (CANVAS_HEIGHT - TREASURE_SIZE),
-        collected: false,
-        type: Math.random() > 0.7 ? 'special' : 'normal'
+  const initializeScene = () => {
+    // Generate NPCs, items, and enemies for current scene
+    const sceneNpcs = generateSceneElements('npcs');
+    const sceneItems = generateSceneElements('items');
+    const sceneEnemies = generateSceneElements('enemies');
+    
+    setNpcs(sceneNpcs);
+    setItems(sceneItems);
+    setEnemies(sceneEnemies);
+  };
+
+  const generateSceneElements = (type) => {
+    const elements = [];
+    const count = Math.floor(Math.random() * 3) + 1;
+    
+    for (let i = 0; i < count; i++) {
+      elements.push({
+        id: Math.random(),
+        x: Math.random() * 700 + 50,
+        y: Math.random() * 400 + 100,
+        type: type,
+        interacted: false
       });
     }
-
-    // Generate enemies
-    for (let i = 0; i < enemyCount; i++) {
-      newEnemies.push({
-        x: Math.random() * (CANVAS_WIDTH - ENEMY_SIZE),
-        y: Math.random() * (CANVAS_HEIGHT - ENEMY_SIZE),
-        vx: (Math.random() - 0.5) * 2,
-        vy: (Math.random() - 0.5) * 2,
-        alive: true
-      });
-    }
-
-    setTreasures(newTreasures);
-    setEnemies(newEnemies);
-  }, []);
+    return elements;
+  };
 
   // AI API call function
-  const callAI = async (prompt) => {
+  const callAI = async (prompt, context = '') => {
     setIsAiThinking(true);
     try {
-      const response = await fetch('/api/ai-chat', {
+      const response = await fetch('/api/ai-oracle', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
-          prompt: `You are a mystical AI guide in a dungeon exploration game. Keep responses under 50 words, be encouraging and mysterious. Context: ${prompt}` 
+        body: JSON.stringify({
+          prompt: prompt,
+          context: context,
+          scene: currentScene,
+          playerLevel: player.level,
+          questProgress: questProgress
         }),
       });
-      
+
       if (!response.ok) {
-        throw new Error('AI service unavailable');
+        throw new Error('AI Oracle is temporarily unavailable');
+      }
+
+      const data = await response.json();
+      setAiResponse(data.response);
+      addToGameLog(`🔮 Oracle: ${data.response}`);
+      
+      // Process any game state changes suggested by AI
+      if (data.gameEffects) {
+        processAiEffects(data.gameEffects);
       }
       
-      const data = await response.json();
-      setAiResponse(data.response || 'Hmm, the mystical energies are unclear...');
     } catch (error) {
-      setAiResponse('The AI oracle is resting. Try again soon!');
+      console.error('AI call failed:', error);
+      setAiResponse('The Oracle\'s voice grows faint... The mystical connection wavers. Perhaps try again in a moment.');
+      addToGameLog('⚠️ The Oracle\'s power fluctuates...');
     } finally {
       setIsAiThinking(false);
     }
   };
 
-  // Handle keyboard input
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      setKeys(prev => ({ ...prev, [e.key]: true }));
-    };
+  const processAiEffects = (effects) => {
+    if (effects.healthChange) {
+      setPlayer(prev => ({
+        ...prev,
+        health: Math.max(0, Math.min(100, prev.health + effects.healthChange))
+      }));
+    }
+    if (effects.experienceGain) {
+      setPlayer(prev => ({
+        ...prev,
+        experience: prev.experience + effects.experienceGain
+      }));
+    }
+    if (effects.newQuest) {
+      setQuestProgress(prev => ({
+        ...prev,
+        currentQuest: effects.newQuest
+      }));
+    }
+  };
 
-    const handleKeyUp = (e) => {
-      setKeys(prev => ({ ...prev, [e.key]: false }));
-    };
+  const addToGameLog = (message) => {
+    setGameLog(prev => [...prev.slice(-10), message]);
+  };
 
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []);
-
-  // Game logic
-  const updateGame = useCallback(() => {
-    if (gameState !== 'playing') return;
-
+  // Player movement
+  const movePlayer = useCallback((direction) => {
     setPlayer(prev => {
       let newX = prev.x;
       let newY = prev.y;
+      const speed = 20;
 
-      // Player movement
-      if (keys['ArrowLeft'] || keys['a']) newX = Math.max(0, prev.x - 3);
-      if (keys['ArrowRight'] || keys['d']) newX = Math.min(CANVAS_WIDTH - PLAYER_SIZE, prev.x + 3);
-      if (keys['ArrowUp'] || keys['w']) newY = Math.max(0, prev.y - 3);
-      if (keys['ArrowDown'] || keys['s']) newY = Math.min(CANVAS_HEIGHT - PLAYER_SIZE, prev.y + 3);
+      switch (direction) {
+        case 'up': newY = Math.max(50, prev.y - speed); break;
+        case 'down': newY = Math.min(450, prev.y + speed); break;
+        case 'left': newX = Math.max(50, prev.x - speed); break;
+        case 'right': newX = Math.min(750, prev.x + speed); break;
+      }
 
       return { ...prev, x: newX, y: newY };
     });
+  }, []);
 
-    // Update enemies
-    setEnemies(prev => prev.map(enemy => {
-      if (!enemy.alive) return enemy;
-
-      let newX = enemy.x + enemy.vx;
-      let newY = enemy.y + enemy.vy;
-
-      // Bounce off walls
-      if (newX <= 0 || newX >= CANVAS_WIDTH - ENEMY_SIZE) enemy.vx *= -1;
-      if (newY <= 0 || newY >= CANVAS_HEIGHT - ENEMY_SIZE) enemy.vy *= -1;
-
-      newX = Math.max(0, Math.min(CANVAS_WIDTH - ENEMY_SIZE, newX));
-      newY = Math.max(0, Math.min(CANVAS_HEIGHT - ENEMY_SIZE, newY));
-
-      return { ...enemy, x: newX, y: newY };
-    }));
-
-    // Check collisions
-    setTreasures(prev => prev.map(treasure => {
-      if (treasure.collected) return treasure;
-
-      const dx = player.x - treasure.x;
-      const dy = player.y - treasure.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-
-      if (distance < PLAYER_SIZE) {
-        setPlayer(p => ({ 
-          ...p, 
-          score: p.score + (treasure.type === 'special' ? 50 : 10) 
-        }));
-        
-        // Add particles
-        setParticles(p => [...p, ...Array.from({length: 5}, (_, i) => ({
-          x: treasure.x,
-          y: treasure.y,
-          vx: (Math.random() - 0.5) * 4,
-          vy: (Math.random() - 0.5) * 4,
-          life: 30,
-          color: treasure.type === 'special' ? '#ffd700' : '#00ff00'
-        }))]);
-
-        return { ...treasure, collected: true };
+  // Keyboard controls
+  useEffect(() => {
+    const handleKeyPress = (e) => {
+      if (gameState !== 'playing') return;
+      
+      switch (e.key) {
+        case 'ArrowUp':
+        case 'w':
+        case 'W':
+          e.preventDefault();
+          movePlayer('up');
+          break;
+        case 'ArrowDown':
+        case 's':
+        case 'S':
+          e.preventDefault();
+          movePlayer('down');
+          break;
+        case 'ArrowLeft':
+        case 'a':
+        case 'A':
+          e.preventDefault();
+          movePlayer('left');
+          break;
+        case 'ArrowRight':
+        case 'd':
+        case 'D':
+          e.preventDefault();
+          movePlayer('right');
+          break;
+        case ' ':
+          e.preventDefault();
+          checkInteractions();
+          break;
+        case 'Enter':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            openAiOracle();
+          }
+          break;
       }
-      return treasure;
-    }));
+    };
 
-    // Check enemy collisions
-    enemies.forEach(enemy => {
-      if (!enemy.alive) return;
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [gameState, movePlayer]);
 
-      const dx = player.x - enemy.x;
-      const dy = player.y - enemy.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-
-      if (distance < PLAYER_SIZE) {
-        setPlayer(p => ({ ...p, health: Math.max(0, p.health - 1) }));
+  const checkInteractions = () => {
+    const interactionDistance = 60;
+    
+    // Check NPC interactions
+    npcs.forEach(npc => {
+      const distance = Math.sqrt(
+        Math.pow(player.x - npc.x, 2) + Math.pow(player.y - npc.y, 2)
+      );
+      if (distance < interactionDistance && !npc.interacted) {
+        interactWithNPC(npc);
       }
     });
 
-    // Update particles
-    setParticles(prev => prev.map(p => ({
-      ...p,
-      x: p.x + p.vx,
-      y: p.y + p.vy,
-      life: p.life - 1
-    })).filter(p => p.life > 0));
-
-    // Check level completion
-    const uncollectedTreasures = treasures.filter(t => !t.collected);
-    if (uncollectedTreasures.length === 0) {
-      setPlayer(p => ({ ...p, level: p.level + 1 }));
-      setRoomNumber(r => r + 1);
-      generateRoom(player.level + 1);
-      
-      // Occasional AI comment on progress
-      if (Math.random() < 0.3) {
-        const contexts = [
-          `Player completed room ${roomNumber}, now at level ${player.level + 1}`,
-          `Player has ${player.score} points and is doing well`,
-          `Player just cleared a room with ${player.health} health remaining`
-        ];
-        callAI(contexts[Math.floor(Math.random() * contexts.length)]);
+    // Check item collection
+    items.forEach(item => {
+      const distance = Math.sqrt(
+        Math.pow(player.x - item.x, 2) + Math.pow(player.y - item.y, 2)
+      );
+      if (distance < interactionDistance) {
+        collectItem(item);
       }
-    }
-
-    // Check game over
-    if (player.health <= 0) {
-      setGameState('menu');
-      callAI(`Player died at level ${player.level} with ${player.score} points. Give encouraging words.`);
-    }
-  }, [gameState, keys, player, treasures, enemies, roomNumber, generateRoom]);
-
-  // Game loop
-  useEffect(() => {
-    if (gameState === 'playing') {
-      gameLoopRef.current = setInterval(updateGame, 16); // ~60fps
-    } else {
-      clearInterval(gameLoopRef.current);
-    }
-
-    return () => clearInterval(gameLoopRef.current);
-  }, [gameState, updateGame]);
-
-  // Canvas rendering
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-    if (gameState === 'playing') {
-      // Draw gradient background
-      const gradient = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
-      gradient.addColorStop(0, '#1a1a2e');
-      gradient.addColorStop(1, '#16213e');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-
-      // Draw treasures
-      treasures.forEach(treasure => {
-        if (treasure.collected) return;
-
-        ctx.save();
-        ctx.translate(treasure.x + TREASURE_SIZE/2, treasure.y + TREASURE_SIZE/2);
-        ctx.rotate(Date.now() * 0.005);
-        
-        if (treasure.type === 'special') {
-          ctx.fillStyle = '#ffd700';
-          ctx.shadowColor = '#ffd700';
-          ctx.shadowBlur = 10;
-        } else {
-          ctx.fillStyle = '#00ff00';
-          ctx.shadowColor = '#00ff00';
-          ctx.shadowBlur = 5;
-        }
-        
-        ctx.fillRect(-TREASURE_SIZE/2, -TREASURE_SIZE/2, TREASURE_SIZE, TREASURE_SIZE);
-        ctx.restore();
-      });
-
-      // Draw enemies
-      enemies.forEach(enemy => {
-        if (!enemy.alive) return;
-
-        ctx.save();
-        ctx.fillStyle = '#ff4444';
-        ctx.shadowColor = '#ff4444';
-        ctx.shadowBlur = 8;
-        ctx.beginPath();
-        ctx.arc(enemy.x + ENEMY_SIZE/2, enemy.y + ENEMY_SIZE/2, ENEMY_SIZE/2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      });
-
-      // Draw player
-      ctx.save();
-      ctx.translate(player.x + PLAYER_SIZE/2, player.y + PLAYER_SIZE/2);
-      ctx.fillStyle = '#00bfff';
-      ctx.shadowColor = '#00bfff';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.arc(0, 0, PLAYER_SIZE/2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // Draw particles
-      particles.forEach(particle => {
-        ctx.save();
-        ctx.globalAlpha = particle.life / 30;
-        ctx.fillStyle = particle.color;
-        ctx.fillRect(particle.x, particle.y, 3, 3);
-        ctx.restore();
-      });
-    }
-  }, [gameState, player, treasures, enemies, particles]);
-
-  const startGame = () => {
-    setGameState('playing');
-    setPlayer({ x: 50, y: 300, health: 100, score: 0, level: 1 });
-    setRoomNumber(1);
-    generateRoom(1);
-    callAI("Player just started a new adventure in the mystical dungeon!");
+    });
   };
 
-  const askAI = () => {
-    const contexts = [
-      `Player is at level ${player.level}, room ${roomNumber}, with ${player.health} health and ${player.score} points`,
-      `Player has ${treasures.filter(t => !t.collected).length} treasures left to collect`,
-      `Player is facing ${enemies.filter(e => e.alive).length} enemies`
+  const interactWithNPC = (npc) => {
+    const npcDialogues = [
+      "The ancient wisdom flows through these lands...",
+      "Seek the Oracle for guidance on your journey.",
+      "Beware the shadows that lurk in the deeper woods.",
+      "Your destiny awaits beyond the mystical veil.",
+      "The spirits whisper of great adventures ahead."
     ];
-    callAI(contexts[Math.floor(Math.random() * contexts.length)]);
-    setShowAiPanel(true);
+    
+    const dialogue = npcDialogues[Math.floor(Math.random() * npcDialogues.length)];
+    addToGameLog(`💬 Villager: ${dialogue}`);
+    
+    setNpcs(prev => prev.map(n => 
+      n.id === npc.id ? { ...n, interacted: true } : n
+    ));
+    
+    // Gain experience for social interaction
+    setPlayer(prev => ({ ...prev, experience: prev.experience + 10 }));
   };
 
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4">
-      <div className="bg-black/20 backdrop-blur-sm rounded-lg p-6 shadow-2xl border border-purple-500/30">
-        <div className="text-center mb-4">
-          <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 mb-2">
-            AI Dungeon Explorer
-          </h1>
-          <p className="text-gray-300">Navigate rooms, collect treasures, avoid enemies!</p>
-        </div>
+  const collectItem = (item) => {
+    const itemTypes = ['⚔️ Mystic Sword', '🛡️ Ancient Shield', '💎 Power Crystal', '📜 Wisdom Scroll', '🔮 Magic Orb'];
+    const collectedItem = itemTypes[Math.floor(Math.random() * itemTypes.length)];
+    
+    addToGameLog(`✨ Found: ${collectedItem}`);
+    setPlayer(prev => ({
+      ...prev,
+      inventory: [...prev.inventory, collectedItem],
+      experience: prev.experience + 15
+    }));
+    
+    setItems(prev => prev.filter(i => i.id !== item.id));
+  };
 
-        {gameState === 'menu' && (
-          <div className="text-center space-y-4">
-            <div className="text-gray-300 mb-6">
-              <p>Use WASD or Arrow Keys to move</p>
-              <p>Collect all treasures to advance to the next room</p>
-              <p>Ask your AI companion for guidance!</p>
+  const openAiOracle = () => {
+    setGameState('ai-interaction');
+    setPlayerInput('');
+  };
+
+  const askOracle = async () => {
+    if (!playerInput.trim()) return;
+    
+    addToGameLog(`🧙‍♂️ You: ${playerInput}`);
+    
+    const context = `
+      Current scene: ${scenes[currentScene].name}
+      Player level: ${player.level}
+      Player health: ${player.health}%
+      Player inventory: ${player.inventory.join(', ') || 'Empty'}
+      Current quest: ${questProgress.currentQuest}
+      Recent events: ${gameLog.slice(-3).join(' | ')}
+    `;
+
+    await callAI(playerInput, context);
+    setPlayerInput('');
+  };
+
+  const changeScene = (newScene) => {
+    setCurrentScene(newScene);
+    addToGameLog(`🌟 Entered ${scenes[newScene].name}`);
+    setPlayer(prev => ({ ...prev, experience: prev.experience + 20 }));
+  };
+
+  // Level up system
+  useEffect(() => {
+    const expNeeded = player.level * 100;
+    if (player.experience >= expNeeded) {
+      setPlayer(prev => ({
+        ...prev,
+        level: prev.level + 1,
+        health: Math.min(100, prev.health + 20),
+        experience: prev.experience - expNeeded
+      }));
+      addToGameLog(`🎉 Level Up! You are now level ${player.level + 1}!`);
+    }
+  }, [player.experience, player.level]);
+
+  // Render game menu
+  if (gameState === 'menu') {
+    return (
+      <div className="w-full h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center">
+        <div className="text-center text-white space-y-8 p-8 rounded-2xl bg-black/30 backdrop-blur-sm border border-purple-500/30">
+          <div className="space-y-4">
+            <h1 className="text-6xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+              Mystic Quest
+            </h1>
+            <p className="text-xl text-purple-200">AI-Powered Adventure Awaits</p>
+          </div>
+          
+          <div className="space-y-6">
+            <p className="text-lg text-gray-300 max-w-md mx-auto leading-relaxed">
+              Embark on a magical journey where an AI Oracle guides your destiny. 
+              Explore mystical lands, solve puzzles, and discover your true potential!
+            </p>
+            
+            <div className="space-y-3 text-sm text-purple-200">
+              <p>🎮 Use WASD or Arrow Keys to move</p>
+              <p>🔮 Press Ctrl+Enter to consult the AI Oracle</p>
+              <p>⚡ Press Space to interact with objects</p>
             </div>
+            
             <button
-              onClick={startGame}
-              className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-3 px-8 rounded-lg transition-all duration-200 transform hover:scale-105"
+              onClick={() => setGameState('playing')}
+              className="px-8 py-4 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 
+                       rounded-full text-white font-semibold text-lg transition-all duration-300 transform hover:scale-105 
+                       shadow-lg hover:shadow-purple-500/25"
             >
-              <Sparkles className="inline-block mr-2" size={20} />
-              Start Adventure
+              Begin Your Quest
             </button>
           </div>
-        )}
+        </div>
+      </div>
+    );
+  }
 
-        {gameState === 'playing' && (
-          <div className="space-y-4">
-            {/* Game Stats */}
-            <div className="flex justify-between items-center text-white">
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center">
-                  <Heart className="mr-1 text-red-400" size={16} />
-                  <span>{player.health}/100</span>
-                </div>
-                <div className="flex items-center">
-                  <Star className="mr-1 text-yellow-400" size={16} />
-                  <span>{player.score}</span>
-                </div>
-                <div className="flex items-center">
-                  <Zap className="mr-1 text-blue-400" size={16} />
-                  <span>Room {roomNumber}</span>
-                </div>
-              </div>
-              <div className="flex space-x-2">
-                <button
-                  onClick={askAI}
-                  disabled={isAiThinking}
-                  className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 disabled:opacity-50 text-white px-3 py-1 rounded-lg transition-all duration-200"
-                >
-                  {isAiThinking ? (
-                    <RefreshCw className="animate-spin" size={16} />
-                  ) : (
-                    <MessageCircle size={16} />
-                  )}
-                </button>
-                <button
-                  onClick={() => setGameState('menu')}
-                  className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded-lg transition-all duration-200"
-                >
-                  Menu
-                </button>
+  // Render AI interaction screen
+  if (gameState === 'ai-interaction') {
+    return (
+      <div className="w-full h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex items-center justify-center p-4">
+        <div className="w-full max-w-4xl bg-black/40 backdrop-blur-sm rounded-2xl border border-purple-500/30 p-8">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center gap-3 text-3xl font-bold text-white mb-4">
+              <Sparkles className="text-purple-400" />
+              AI Oracle Chamber
+              <Sparkles className="text-purple-400" />
+            </div>
+            <p className="text-purple-200">Seek wisdom from the ancient AI Oracle</p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Oracle Response */}
+            <div className="space-y-4">
+              <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+                <Eye className="text-purple-400" />
+                Oracle's Vision
+              </h3>
+              <div className="bg-purple-900/30 rounded-lg p-6 min-h-[200px] border border-purple-500/20">
+                {isAiThinking ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="flex items-center gap-3 text-purple-300">
+                      <Loader className="animate-spin" />
+                      The Oracle contemplates your query...
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-purple-100 leading-relaxed">
+                    {aiResponse || "The Oracle awaits your question..."}
+                  </p>
+                )}
               </div>
             </div>
 
-            {/* Game Canvas */}
-            <canvas
-              ref={canvasRef}
-              width={CANVAS_WIDTH}
-              height={CANVAS_HEIGHT}
-              className="border-2 border-purple-400/50 rounded-lg bg-black/50"
-            />
-
-            {/* AI Response Panel */}
-            {showAiPanel && aiResponse && (
-              <div className="bg-black/30 backdrop-blur-sm rounded-lg p-4 border border-green-400/30">
-                <div className="flex justify-between items-start">
-                  <div className="flex items-start space-x-2">
-                    <Sparkles className="text-green-400 mt-1" size={16} />
-                    <div>
-                      <p className="text-green-400 font-semibold">AI Guide</p>
-                      <p className="text-gray-300">{aiResponse}</p>
-                    </div>
-                  </div>
+            {/* Player Input */}
+            <div className="space-y-4">
+              <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+                <MessageCircle className="text-blue-400" />
+                Your Query
+              </h3>
+              <div className="space-y-4">
+                <textarea
+                  value={playerInput}
+                  onChange={(e) => setPlayerInput(e.target.value)}
+                  placeholder="Ask the Oracle about your quest, seek guidance, or request a puzzle..."
+                  className="w-full h-32 bg-blue-900/30 border border-blue-500/30 rounded-lg p-4 text-white 
+                           placeholder-blue-300/50 focus:outline-none focus:border-blue-400 resize-none"
+                />
+                <div className="flex gap-3">
                   <button
-                    onClick={() => setShowAiPanel(false)}
-                    className="text-gray-400 hover:text-white"
+                    onClick={askOracle}
+                    disabled={isAiThinking || !playerInput.trim()}
+                    className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 
+                             disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed
+                             rounded-lg text-white font-semibold transition-all duration-300"
                   >
-                    ×
+                    {isAiThinking ? 'Consulting Oracle...' : 'Ask Oracle'}
+                  </button>
+                  <button
+                    onClick={() => setGameState('playing')}
+                    className="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-white font-semibold 
+                             transition-all duration-300"
+                  >
+                    Return
                   </button>
                 </div>
               </div>
-            )}
-
-            {/* Progress */}
-            <div className="text-center text-gray-300">
-              <p>Treasures remaining: {treasures.filter(t => !t.collected).length}</p>
             </div>
           </div>
-        )}
+
+          {/* Game Log */}
+          <div className="mt-8">
+            <h3 className="text-lg font-semibold text-white mb-3">Recent Events</h3>
+            <div className="bg-gray-900/50 rounded-lg p-4 max-h-32 overflow-y-auto">
+              {gameLog.slice(-5).map((log, index) => (
+                <p key={index} className="text-gray-300 text-sm mb-1">{log}</p>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Main game render
+  return (
+    <div className="w-full h-screen bg-gradient-to-br from-gray-900 to-black overflow-hidden relative">
+      {/* Game World */}
+      <div className={`absolute inset-0 bg-gradient-to-br ${scenes[currentScene].color} opacity-80`} />
+      
+      {/* HUD */}
+      <div className="absolute top-4 left-4 right-4 z-10 flex justify-between items-start">
+        {/* Player Stats */}
+        <div className="bg-black/50 backdrop-blur-sm rounded-lg p-4 text-white space-y-2 border border-white/20">
+          <div className="flex items-center gap-2">
+            <Heart className="text-red-400 w-5 h-5" />
+            <div className="w-32 h-2 bg-gray-700 rounded-full">
+              <div 
+                className="h-full bg-gradient-to-r from-red-500 to-red-400 rounded-full transition-all duration-300"
+                style={{ width: `${player.health}%` }}
+              />
+            </div>
+            <span className="text-sm">{player.health}%</span>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <Star className="text-yellow-400 w-5 h-5" />
+            <span className="text-sm">Level {player.level}</span>
+            <div className="w-20 h-2 bg-gray-700 rounded-full">
+              <div 
+                className="h-full bg-gradient-to-r from-yellow-500 to-yellow-400 rounded-full transition-all duration-300"
+                style={{ width: `${(player.experience % (player.level * 100)) / (player.level * 100) * 100}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Scene Info */}
+        <div className="bg-black/50 backdrop-blur-sm rounded-lg p-4 text-white text-center border border-white/20">
+          <h2 className="text-xl font-bold">{scenes[currentScene].name}</h2>
+          <p className="text-sm text-gray-300">{scenes[currentScene].description}</p>
+        </div>
+
+        {/* Quest Info */}
+        <div className="bg-black/50 backdrop-blur-sm rounded-lg p-4 text-white space-y-2 max-w-xs border border-white/20">
+          <h3 className="font-semibold text-purple-300">Current Quest</h3>
+          <p className="text-sm">{questProgress.currentQuest}</p>
+          <div className="text-xs text-gray-300">
+            Inventory: {player.inventory.length} items
+          </div>
+        </div>
+      </div>
+
+      {/* Game Controls */}
+      <div className="absolute bottom-4 left-4 right-4 z-10 flex justify-between items-center">
+        {/* Scene Navigation */}
+        <div className="flex gap-2">
+          {Object.entries(scenes).map(([key, scene]) => (
+            <button
+              key={key}
+              onClick={() => changeScene(key)}
+              className={`px-4 py-2 rounded-lg font-semibold transition-all duration-300 ${
+                currentScene === key 
+                  ? 'bg-purple-600 text-white' 
+                  : 'bg-black/50 text-gray-300 hover:bg-black/70'
+              }`}
+            >
+              {scene.name}
+            </button>
+          ))}
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex gap-3">
+          <button
+            onClick={openAiOracle}
+            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 
+                     hover:from-purple-500 hover:to-pink-500 rounded-lg text-white font-semibold 
+                     transition-all duration-300 transform hover:scale-105 shadow-lg"
+          >
+            <Sparkles className="w-5 h-5" />
+            Consult Oracle
+          </button>
+          
+          <button
+            onClick={checkInteractions}
+            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 
+                     hover:from-blue-500 hover:to-cyan-500 rounded-lg text-white font-semibold 
+                     transition-all duration-300 transform hover:scale-105 shadow-lg"
+          >
+            <Zap className="w-5 h-5" />
+            Interact
+          </button>
+        </div>
+      </div>
+
+      {/* Game Entities */}
+      <div className="absolute inset-0 z-5">
+        {/* Player */}
+        <div 
+          className="absolute w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-600 rounded-full 
+                     border-2 border-white shadow-lg transform -translate-x-4 -translate-y-4 transition-all duration-200
+                     animate-pulse"
+          style={{ left: player.x, top: player.y }}
+        >
+          <div className="absolute inset-1 bg-white rounded-full opacity-70" />
+        </div>
+
+        {/* NPCs */}
+        {npcs.map(npc => (
+          <div
+            key={npc.id}
+            className={`absolute w-6 h-6 rounded-full border-2 border-white shadow-md transform -translate-x-3 -translate-y-3
+                       ${npc.interacted ? 'bg-gray-500' : 'bg-gradient-to-br from-green-400 to-emerald-600 animate-bounce'}`}
+            style={{ left: npc.x, top: npc.y }}
+          />
+        ))}
+
+        {/* Items */}
+        {items.map(item => (
+          <div
+            key={item.id}
+            className="absolute w-4 h-4 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full 
+                     border border-white shadow-md transform -translate-x-2 -translate-y-2 animate-spin"
+            style={{ left: item.x, top: item.y, animationDuration: '3s' }}
+          />
+        ))}
+      </div>
+
+      {/* Game Log */}
+      <div className="absolute bottom-20 left-4 max-w-md z-10">
+        <div className="bg-black/70 backdrop-blur-sm rounded-lg p-3 text-white text-sm space-y-1 max-h-32 overflow-y-auto border border-white/20">
+          {gameLog.slice(-4).map((log, index) => (
+            <p key={index} className="opacity-80">{log}</p>
+          ))}
+        </div>
       </div>
     </div>
   );
 };
 
-export default AI_DUNGEON_GAME;
+export default MysticQuestGame;
